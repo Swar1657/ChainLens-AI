@@ -8,6 +8,7 @@ from langgraph.graph import StateGraph, END
 from src.storage.sql.database import DatabaseClient
 from src.analytics.risk import summarize_portfolio_risk
 from src.agents.contracts import RiskAssessment, RiskComponent, StatusEnum, SeverityEnum
+from src.rag.vector_store import retrieve_context, format_retrieved_context
 
 # --- Agent State ---
 
@@ -16,6 +17,9 @@ class RiskState(TypedDict):
     
     # Deterministic Data
     portfolio_risk: dict
+    
+    # RAG Context
+    rag_context: str
     
     # Final Output
     assessment: Optional[RiskAssessment]
@@ -51,9 +55,14 @@ def fetch_and_calculate_risk(state: RiskState) -> RiskState:
             
             portfolio_risk = summarize_portfolio_risk(df_shipments, df_inventory)
             
+        # Also fetch RAG context for operational definitions
+        docs = retrieve_context(state['query'], k=2)
+        rag_context = format_retrieved_context(docs)
+            
         return {
             **state,
-            "portfolio_risk": portfolio_risk
+            "portfolio_risk": portfolio_risk,
+            "rag_context": rag_context
         }
     except Exception as e:
         return {**state, "error": f"Database or calculation error: {str(e)}"}
@@ -85,10 +94,13 @@ Original Query: {state['query']}
 Current Portfolio Risk Metrics:
 {state['portfolio_risk']}
 
+Operational Context (RAG):
+{state.get('rag_context', 'No context provided.')}
+
 Instructions:
-1. Map these metrics into appropriate RiskComponents (e.g. 'Delivery Risk' based on late_shipment_rate, 'Inventory Risk' based on stockout_rate).
-2. Assign an overall severity based on these metrics.
-3. Provide actionable mitigation recommendations.
+1. Map these metrics into appropriate RiskComponents (e.g. 'Delivery Risk' based on late_shipment_rate).
+2. Assign an overall severity based on these metrics AND the operational policies in the context.
+3. Provide actionable mitigation recommendations referencing the official policies if applicable.
 4. Calculate an overall score (0.0 to 1.0) mathematically based on the component metrics.
 """
     try:

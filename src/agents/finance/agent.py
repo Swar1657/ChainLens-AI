@@ -9,6 +9,7 @@ from langgraph.graph import StateGraph, END
 from src.storage.sql.database import DatabaseClient
 from src.analytics.finance import calculate_period_metrics, calculate_period_over_period
 from src.agents.contracts import FinancialReport, FinancialMetric, StatusEnum
+from src.rag.vector_store import retrieve_context, format_retrieved_context
 
 # --- Agent State ---
 
@@ -23,6 +24,9 @@ class FinanceState(TypedDict):
     current_metrics: dict
     previous_metrics: dict
     trends: dict
+    
+    # RAG Context
+    rag_context: str
     
     # Final Output
     report: Optional[FinancialReport]
@@ -55,11 +59,15 @@ def fetch_and_calculate_metrics(state: FinanceState) -> FinanceState:
                 prev_metrics = calculate_period_metrics(df_prev)
                 trends = calculate_period_over_period(curr_metrics, prev_metrics)
                 
+        docs = retrieve_context(state['query'], k=2)
+        rag_context = format_retrieved_context(docs)
+                
         return {
             **state,
             "current_metrics": curr_metrics,
             "previous_metrics": prev_metrics,
-            "trends": trends
+            "trends": trends,
+            "rag_context": rag_context
         }
     except Exception as e:
         return {**state, "error": f"Database or calculation error: {str(e)}"}
@@ -95,7 +103,10 @@ Previous Period ({state.get('previous_start')} to {state.get('previous_end')}):
 Trends (Growth %):
 {state['trends']}
 
-Provide a brief, executive-level interpretation of the financial health based on these numbers.
+Operational Guidelines (RAG Context):
+{state.get('rag_context', 'No specific guidelines retrieved.')}
+
+Provide a brief, executive-level interpretation of the financial health based on these numbers, referencing any official guidelines if margins fall below benchmarks.
 """
     try:
         report = structured_llm.invoke([
