@@ -75,3 +75,24 @@ class FinancialReport(BaseModel):
     interpretation: str = Field(description="Executive interpretation of the financial health.")
     status: str = Field(default=StatusEnum.SUCCESS)
     error_message: Optional[str] = None
+
+# --- Supervisor Agent Contracts ---
+
+class AgentSelection(BaseModel):
+    use_data_analyst: bool = Field(description="Whether the user query requires fetching basic/raw quantitative data or exploratory SQL analytics.")
+    use_risk: bool = Field(description="Whether the user query requires identifying portfolio risks, late deliveries, or inventory severity.")
+    use_finance: bool = Field(description="Whether the user query asks for revenue, profit, margins, or financial diagnostics.")
+
+class AgentSubResult(BaseModel):
+    agent_name: str
+    status: str
+    result_data: Any
+    error_message: Optional[str] = None
+
+class ExecutiveReport(BaseModel):
+    summary: str = Field(description="High-level executive summary across all requested domains.")
+    data_insights: Optional[str] = Field(description="Key insights from the Data Analyst agent, if called.", default=None)
+    risk_insights: Optional[str] = Field(description="Key insights from the Risk agent, if called.", default=None)
+    finance_insights: Optional[str] = Field(description="Key insights from the Finance agent, if called.", default=None)
+    overall_status: str = Field(default=StatusEnum.SUCCESS)
+    failures: List[str] = Field(description="List of agents that failed to execute properly.", default_factory=list)
