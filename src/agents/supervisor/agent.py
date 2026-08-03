@@ -22,6 +22,7 @@ from src.agents.contracts import (
 from src.agents.data_analyst.agent import create_data_analyst_agent
 from src.agents.risk.agent import create_risk_agent
 from src.agents.finance.agent import create_finance_agent
+from src.observability.tracer import get_opik_callbacks, safe_track
 
 data_analyst_graph = create_data_analyst_agent()
 risk_graph = create_risk_agent()
@@ -41,6 +42,7 @@ class SupervisorState(TypedDict):
 
 # --- Nodes ---
 
+@safe_track
 def router_node(state: SupervisorState) -> dict:
     """Uses LLM to classify the query and select required agents. Falls back to heuristic if no API key."""
     query_lower = state['query'].lower()
@@ -63,7 +65,10 @@ If the query is general (e.g., "Give me a complete health check"), select all th
 
 User Query: {state['query']}
 """
-            selection = structured_llm.invoke(prompt)
+            selection = structured_llm.invoke(
+                prompt,
+                config={"callbacks": get_opik_callbacks()}
+            )
             return {"selection": selection}
         except Exception as e:
             pass # Fall back to heuristic
@@ -188,6 +193,7 @@ def finance_node(state: dict) -> dict:
         return {"sub_results": [AgentSubResult(agent_name="Finance", status=StatusEnum.FAILED, error_message=str(e), result_data=None)]}
 
 
+@safe_track
 def synthesize_results(state: SupervisorState) -> dict:
     """Fan-in node to collect sub_results and write the executive report."""
     sub_results = state.get("sub_results", [])
@@ -219,7 +225,10 @@ Agent Results:
 Synthesize a coherent ExecutiveReport. Do NOT invent data. Rely strictly on the agent results provided.
 If an agent failed, note it in the failures list.
 """
-            report = structured_llm.invoke(prompt)
+            report = structured_llm.invoke(
+                prompt,
+                config={"callbacks": get_opik_callbacks()}
+            )
             # Ensure failures are captured
             if failures:
                 report.overall_status = StatusEnum.PARTIAL_SUCCESS

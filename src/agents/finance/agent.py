@@ -10,6 +10,7 @@ from src.storage.sql.database import DatabaseClient
 from src.analytics.finance import calculate_period_metrics, calculate_period_over_period
 from src.agents.contracts import FinancialReport, FinancialMetric, StatusEnum
 from src.rag.vector_store import retrieve_context, format_retrieved_context
+from src.observability.tracer import get_opik_callbacks, safe_track
 
 # --- Agent State ---
 
@@ -34,6 +35,7 @@ class FinanceState(TypedDict):
 
 # --- Nodes ---
 
+@safe_track
 def fetch_and_calculate_metrics(state: FinanceState) -> FinanceState:
     """Queries the database and performs deterministic math."""
     try:
@@ -72,6 +74,7 @@ def fetch_and_calculate_metrics(state: FinanceState) -> FinanceState:
     except Exception as e:
         return {**state, "error": f"Database or calculation error: {str(e)}"}
 
+@safe_track
 def generate_interpretation(state: FinanceState) -> FinanceState:
     """Uses LLM strictly to interpret the deterministic math."""
     if state.get("error"):
@@ -109,10 +112,13 @@ Operational Guidelines (RAG Context):
 Provide a brief, executive-level interpretation of the financial health based on these numbers, referencing any official guidelines if margins fall below benchmarks.
 """
     try:
-        report = structured_llm.invoke([
-            SystemMessage(content="You are a strict financial analyst. You do not calculate, you only interpret provided data into structured output."),
-            HumanMessage(content=prompt)
-        ])
+        report = structured_llm.invoke(
+            [
+                SystemMessage(content="You are a strict financial analyst. You do not calculate, you only interpret provided data into structured output."),
+                HumanMessage(content=prompt)
+            ],
+            config={"callbacks": get_opik_callbacks()}
+        )
         
         # We manually map the metrics array to ensure strict fidelity to the DB
         metrics_list = []

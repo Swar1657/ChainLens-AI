@@ -9,6 +9,7 @@ from src.storage.sql.database import DatabaseClient
 from src.analytics.risk import summarize_portfolio_risk
 from src.agents.contracts import RiskAssessment, RiskComponent, StatusEnum, SeverityEnum
 from src.rag.vector_store import retrieve_context, format_retrieved_context
+from src.observability.tracer import get_opik_callbacks, safe_track
 
 # --- Agent State ---
 
@@ -27,6 +28,7 @@ class RiskState(TypedDict):
 
 # --- Nodes ---
 
+@safe_track
 def fetch_and_calculate_risk(state: RiskState) -> RiskState:
     """Queries the database and computes deterministic risk metrics."""
     try:
@@ -67,6 +69,7 @@ def fetch_and_calculate_risk(state: RiskState) -> RiskState:
     except Exception as e:
         return {**state, "error": f"Database or calculation error: {str(e)}"}
 
+@safe_track
 def generate_interpretation(state: RiskState) -> RiskState:
     """Uses LLM strictly to interpret the deterministic math and write recommendations."""
     if state.get("error"):
@@ -104,10 +107,13 @@ Instructions:
 4. Calculate an overall score (0.0 to 1.0) mathematically based on the component metrics.
 """
     try:
-        assessment = structured_llm.invoke([
-            SystemMessage(content="You are a strict supply chain risk analyst. You interpret hard data and recommend actions. You do not fabricate metrics."),
-            HumanMessage(content=prompt)
-        ])
+        assessment: RiskAssessment = structured_llm.invoke(
+            [
+                SystemMessage(content="You are a Supply Chain Risk Assessor."),
+                HumanMessage(content=prompt)
+            ],
+            config={"callbacks": get_opik_callbacks()}
+        )
         
         assessment.status = StatusEnum.SUCCESS
         return {**state, "assessment": assessment}

@@ -7,6 +7,7 @@ from langgraph.graph import StateGraph, END
 
 from src.storage.sql.database import DatabaseClient
 from src.agents.contracts import DataAnalystResult, SQLQuery, StatusEnum
+from src.observability.tracer import get_opik_callbacks, safe_track
 
 # --- Agent State ---
 
@@ -32,6 +33,7 @@ Allowed tables:
 
 # --- Nodes ---
 
+@safe_track
 def generate_sql(state: DataAnalystState) -> DataAnalystState:
     """Uses LLM to convert query intent into SQL."""
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
@@ -49,10 +51,13 @@ Schema Info:
 User Intent: {state['query_intent']}
 """
     try:
-        sql_query: SQLQuery = structured_llm.invoke([
-            SystemMessage(content="You only output valid SELECT statements according to the schema."),
-            HumanMessage(content=prompt)
-        ])
+        sql_query: SQLQuery = structured_llm.invoke(
+            [
+                SystemMessage(content="You only output valid SELECT statements according to the schema."),
+                HumanMessage(content=prompt)
+            ],
+            config={"callbacks": get_opik_callbacks()}
+        )
         return {
             **state,
             "sql_generated": sql_query.query,
@@ -61,6 +66,7 @@ User Intent: {state['query_intent']}
     except Exception as e:
         return {**state, "error": f"Failed to generate SQL: {str(e)}"}
 
+@safe_track
 def validate_sql(state: DataAnalystState) -> DataAnalystState:
     """Validates the generated SQL for safety (Read-Only)."""
     if state.get("error"):
@@ -82,6 +88,7 @@ def validate_sql(state: DataAnalystState) -> DataAnalystState:
         
     return {**state, "sql_validated": True}
 
+@safe_track
 def execute_sql(state: DataAnalystState) -> DataAnalystState:
     """Executes the validated SQL query against PostgreSQL."""
     if state.get("error") or not state.get("sql_validated"):
@@ -103,6 +110,7 @@ def execute_sql(state: DataAnalystState) -> DataAnalystState:
     except Exception as e:
         return {**state, "error": f"Database execution error: {str(e)}"}
 
+@safe_track
 def interpret_results(state: DataAnalystState) -> DataAnalystState:
     """Interprets the data returned from the database into natural language."""
     if state.get("error"):
@@ -133,10 +141,13 @@ Returned Data:
 Provide a concise, professional explanation of these results. Do not invent numbers. Just summarize what the data says.
 """
         try:
-            msg = llm.invoke([
-                SystemMessage(content="You interpret SQL results clearly."),
-                HumanMessage(content=prompt)
-            ])
+            msg = llm.invoke(
+                [
+                    SystemMessage(content="You interpret SQL results clearly."),
+                    HumanMessage(content=prompt)
+                ],
+                config={"callbacks": get_opik_callbacks()}
+            )
             interpretation = msg.content
         except Exception as e:
             interpretation = f"Failed to interpret results: {str(e)}"
