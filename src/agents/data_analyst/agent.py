@@ -1,8 +1,9 @@
+import os
 import re
 from typing import TypedDict, Optional, List, Dict, Any
+from langchain_google_genai import ChatGoogleGenerativeAI
 from sqlalchemy import text
 from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
 
 from src.storage.sql.database import DatabaseClient
@@ -12,7 +13,7 @@ from src.observability.tracer import get_opik_callbacks, safe_track
 # --- Agent State ---
 
 class DataAnalystState(TypedDict):
-    query_intent: str
+    query: str
     sql_generated: Optional[str]
     sql_explanation: Optional[str]
     sql_validated: bool
@@ -28,6 +29,7 @@ Allowed tables:
 - orders (id, source_order_id, order_item_id, customer_id, customer_segment, customer_city, customer_state, customer_country, order_date, order_status, product_category, product_name, product_id, quantity, product_price, discount, discount_rate, sales, order_item_total, order_profit, profit_ratio)
 - shipments (id, order_item_id, shipping_date, shipping_mode, days_for_shipping_real, days_for_shipping_scheduled, delivery_status, late_delivery_risk)
 - inventory (id, date, product_id, product_category, product_name, stock_level, reorder_point, is_stockout)
+Note: is_stockout and late_delivery_risk are INTEGER columns (1 for true/yes, 0 for false/no). Do NOT compare them to boolean 'true' or 'false'.
 - financial_transactions (id, date, transaction_type, category, amount)
 """
 
@@ -36,7 +38,8 @@ Allowed tables:
 @safe_track
 def generate_sql(state: DataAnalystState) -> DataAnalystState:
     """Uses LLM to convert query intent into SQL."""
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    model_name = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+    llm = ChatGoogleGenerativeAI(model=model_name, temperature=0)
     structured_llm = llm.with_structured_output(SQLQuery)
     
     prompt = f"""You are an expert Data Analyst and PostgreSQL developer.
@@ -48,7 +51,7 @@ Do not use destructive operations (DROP, DELETE, UPDATE, INSERT). Only SELECT is
 Schema Info:
 {SCHEMA_PROMPT}
 
-User Intent: {state['query_intent']}
+User Intent: {state['query']}
 """
     try:
         sql_query: SQLQuery = structured_llm.invoke(
@@ -103,9 +106,22 @@ def execute_sql(state: DataAnalystState) -> DataAnalystState:
             keys = result.keys()
             rows = result.fetchall()
             
-            # Format to list of dicts
-            structured_data = [dict(zip(keys, row)) for row in rows]
+            # Format to list of dicts, casting Decimals/Dates for JSON serialization
+            import decimal
+            import datetime
             
+            structured_data = []
+            for row in rows:
+                row_dict = dict(zip(keys, row))
+                clean_dict = {}
+                for k, v in row_dict.items():
+                    if isinstance(v, decimal.Decimal):
+                        clean_dict[k] = float(v)
+                    elif isinstance(v, (datetime.date, datetime.datetime)):
+                        clean_dict[k] = v.isoformat()
+                    else:
+                        clean_dict[k] = v
+                structured_data.append(clean_dict)
         return {**state, "structured_data": structured_data}
     except Exception as e:
         return {**state, "error": f"Database execution error: {str(e)}"}
@@ -115,7 +131,7 @@ def interpret_results(state: DataAnalystState) -> DataAnalystState:
     """Interprets the data returned from the database into natural language."""
     if state.get("error"):
         result = DataAnalystResult(
-            query_intent=state['query_intent'],
+            query_intent=state.get('query', ''),
             sql_executed=state.get('sql_generated', ''),
             structured_data=[],
             interpretation="Failed to process query.",
@@ -129,10 +145,11 @@ def interpret_results(state: DataAnalystState) -> DataAnalystState:
     if not structured_data:
         interpretation = "The query returned no results."
     else:
-        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+        model_name = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+        llm = ChatGoogleGenerativeAI(model=model_name, temperature=0)
         # We don't use structured output here, we just ask for a string interpretation
         prompt = f"""You are a Data Analyst explaining SQL results to a user.
-User Intent: {state['query_intent']}
+User Intent: {state['query']}
 SQL Executed: {state['sql_generated']}
 
 Returned Data:
@@ -148,13 +165,17 @@ Provide a concise, professional explanation of these results. Do not invent numb
                 ],
                 config={"callbacks": get_opik_callbacks()}
             )
-            interpretation = msg.content
+            content = msg.content
+            if isinstance(content, list):
+                interpretation = "\n".join([str(b.get("text", b)) if isinstance(b, dict) else str(b) for b in content])
+            else:
+                interpretation = str(content)
         except Exception as e:
             interpretation = f"Failed to interpret results: {str(e)}"
     
     result = DataAnalystResult(
-        query_intent=state['query_intent'],
-        sql_executed=state["sql_generated"],
+        query_intent=state.get('query', ''),
+        sql_executed=state.get("sql_generated"),
         structured_data=structured_data,
         interpretation=interpretation,
         status=StatusEnum.SUCCESS

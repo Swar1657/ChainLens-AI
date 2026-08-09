@@ -3,7 +3,7 @@ import json
 import operator
 from typing import TypedDict, List, Optional, Any, Annotated
 from datetime import date
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from langgraph.graph import StateGraph, END
 from langgraph.constants import Send
@@ -48,9 +48,10 @@ def router_node(state: SupervisorState) -> dict:
     query_lower = state['query'].lower()
     
     # Try LLM first
-    if os.getenv("OPENAI_API_KEY"):
+    if os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"):
         try:
-            llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+            model_name = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+            llm = ChatGoogleGenerativeAI(model=model_name, temperature=0)
             structured_llm = llm.with_structured_output(AgentSelection)
             
             prompt = f"""You are the Supervisor for a Supply Chain Decision Intelligence system.
@@ -131,7 +132,7 @@ def data_analyst_node(state: dict) -> dict:
         
         status = da_res.status if da_res else StatusEnum.FAILED
         err = da_res.error_message if da_res else result.get("error")
-        data = da_res.model_dump() if da_res else None
+        data = da_res.model_dump(mode='json') if da_res else None
         
         sub_res = AgentSubResult(
             agent_name="Data Analyst",
@@ -151,7 +152,7 @@ def risk_node(state: dict) -> dict:
         
         status = risk_res.status if risk_res else StatusEnum.FAILED
         err = risk_res.error_message if risk_res else result.get("error")
-        data = risk_res.model_dump() if risk_res else None
+        data = risk_res.model_dump(mode='json') if risk_res else None
         
         sub_res = AgentSubResult(
             agent_name="Risk",
@@ -180,7 +181,7 @@ def finance_node(state: dict) -> dict:
         
         status = fin_res.status if fin_res else StatusEnum.FAILED
         err = fin_res.error_message if fin_res else result.get("error")
-        data = fin_res.model_dump() if fin_res else None
+        data = fin_res.model_dump(mode='json') if fin_res else None
         
         sub_res = AgentSubResult(
             agent_name="Finance",
@@ -209,9 +210,10 @@ def synthesize_results(state: SupervisorState) -> dict:
         else:
             context += f"\n--- {res.agent_name} Agent ---\n{json.dumps(res.result_data, indent=2)}\n"
             
-    if os.getenv("OPENAI_API_KEY"):
+    if os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"):
         try:
-            llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+            model_name = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+            llm = ChatGoogleGenerativeAI(model=model_name, temperature=0)
             structured_llm = llm.with_structured_output(ExecutiveReport)
             
             prompt = f"""You are the Executive Supervisor for a Supply Chain Decision Intelligence system.

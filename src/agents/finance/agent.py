@@ -1,9 +1,10 @@
 from typing import TypedDict, Optional
+import os
 from datetime import date
 import pandas as pd
 from sqlalchemy import text
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
 
 from src.storage.sql.database import DatabaseClient
@@ -87,7 +88,8 @@ def generate_interpretation(state: FinanceState) -> FinanceState:
         )
         return {**state, "report": report}
         
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    model_name = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+    llm = ChatGoogleGenerativeAI(model=model_name, temperature=0)
     structured_llm = llm.with_structured_output(FinancialReport)
     
     # Provide the exact numbers to the LLM
